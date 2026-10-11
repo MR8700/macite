@@ -68,6 +68,7 @@ Dans les variables GitHub Actions, ajoutez `VERCEL_DEPLOY_ENABLED=true` et `VERC
 - Vérifiez les journaux Vercel pour l'initialisation PostgreSQL, les migrations et PostGIS avant d'importer des données réelles.
 - Configurez une sauvegarde/export Neon ; Blob et la base sont des stockages séparés.
 - Les quotas gratuits sont limités. Lorsque les quotas de Blob ou Neon sont atteints, l'application peut refuser de nouvelles opérations ou requêtes.
+- Avant d'ouvrir l'API au public, corrigez les vulnérabilités relevées dans `AUDIT.md` : révocation des anciens jetons après changement/réinitialisation du mot de passe, validation minimale des paramètres `limit`, et réduction de l'énumération des comptes par différences de temps de réponse.
 
 ## Références
 
