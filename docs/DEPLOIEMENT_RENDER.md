@@ -1,14 +1,18 @@
 # Déploiement de production : Render + Vercel
 
-Le dépôt contient un Blueprint Render (`render.yaml`) pour l'API FastAPI, PostgreSQL 16 avec PostGIS et un disque persistant pour les photos. Le frontend React/Vite reste hébergé sur Vercel. Render déploie automatiquement les changements poussés sur `main` après création du Blueprint.
+Le dépôt contient un Blueprint Render (`render.yaml`) pour l'API FastAPI gratuite et PostgreSQL 16 avec PostGIS. Le frontend React/Vite reste hébergé sur Vercel. Render déploie automatiquement les changements poussés sur `main` après création du Blueprint.
+
+## Limites du mode gratuit Render
+
+Le Blueprint utilise le plan gratuit et ne crée pas de disque payant. Render indique que les services web gratuits s'arrêtent après 15 minutes d'inactivité et perdent leurs fichiers à chaque redémarrage, redéploiement ou arrêt. Les photos stockées localement par l'API peuvent donc disparaître et doivent être considérées comme temporaires. La base PostgreSQL gratuite est limitée à 1 Go, expire après 30 jours et ne fournit pas de sauvegardes. Ce mode convient à une démonstration ou un essai, pas à des données de production à conserver. Consultez les [limites gratuites Render](https://render.com/docs/free).
 
 ## 1. Créer les ressources Render
 
 1. Poussez le dépôt GitHub `MR8700/macite` sur `main`.
 2. Dans Render, ouvrez **New → Blueprint**, connectez GitHub et choisissez ce dépôt. Render détecte `render.yaml` à la racine.
-3. Sélectionnez la région Frankfurt si elle est demandée et examinez les ressources/coûts proposés avant de confirmer : l'API et son disque photo utilisent un plan payant, la base PostgreSQL est également une ressource payante.
+3. Sélectionnez la région Frankfurt si elle est demandée. Le Blueprint demande `Free` pour l'API et PostgreSQL ; vérifiez que Render affiche bien ces deux plans avant de confirmer.
 4. À la première création, renseignez les variables marquées `sync: false` dans Render : `MACITE_CORS_ORIGINS`, les mots de passe initiaux releveur/expert/admin, et `GEMINI_API_KEY`. Ne mettez aucune de ces valeurs dans GitHub ni dans le dépôt. Pour Gemini, utilisez une clé renouvelée : la clé envoyée précédemment dans le chat doit être considérée comme exposée.
-5. Render génère `MACITE_SECRET`, relie l'URL PostgreSQL interne, et déploie le conteneur. La migration Alembic active PostGIS au démarrage. Le disque `/app/photos` conserve les fichiers entre les déploiements.
+5. Render génère `MACITE_SECRET`, relie l'URL PostgreSQL interne, et déploie le conteneur. La migration Alembic active PostGIS au démarrage. Le stockage des photos reste éphémère sur le plan gratuit.
 
 L'API Render utilise `CF-Connecting-IP` pour identifier le client à travers le proxy Render/Cloudflare. N'activez pas le proxy `X-Forwarded-For` générique dans cette configuration.
 
@@ -33,10 +37,9 @@ Dans Vercel, désactivez les déploiements Git automatiques si le workflow CLI e
 ## 4. Vérifications et contraintes
 
 - Vérifiez l'état de santé API, la connexion, une recherche publique et le chargement de la carte.
-- Envoyez une photo, redéployez l'API, puis confirmez que la photo est toujours disponible.
+- Les photos peuvent disparaître quand le service gratuit redémarre ou sort de veille ; ne stockez pas de relevés importants sans stockage externe durable.
 - Vérifiez CORS depuis le domaine final HTTPS, ainsi que GPS, caméra QR et mode hors ligne sur téléphone.
-- Configurez et testez une sauvegarde PostgreSQL et des photos hors Render. Le disque persistant n'est pas une sauvegarde.
-- Render ne rend pas le volume photo partagé entre plusieurs instances ; le service reste à une instance tant que les fichiers sont stockés sur ce disque.
+- Exportez régulièrement les données PostgreSQL et les photos si vous utilisez ce mode d'essai. La base gratuite expire après 30 jours.
 - Le démarrage de l'API exécute les migrations PostgreSQL ; vérifiez les journaux du premier déploiement avant d'importer les données réelles.
 - Les problèmes de sécurité recensés dans `AUDIT.md` doivent être corrigés avant l'ouverture publique de l'API.
 

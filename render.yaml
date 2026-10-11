@@ -8,13 +8,9 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: frankfurt
-    plan: 0.5c-512mb
+    plan: free
     healthCheckPath: /api/v1/health
     autoDeployTrigger: commit
-    disk:
-      name: survey-photos
-      mountPath: /app/photos
-      sizeGB: 1
     envVars:
       - key: MACITE_ENV
         value: production
@@ -74,7 +70,7 @@ databases:
     databaseName: macite
     user: macite
     region: frankfurt
-    plan: 0.5c-1g
+    plan: free
     postgresMajorVersion: "16"
     diskSizeGB: 15
     ipAllowList: []
