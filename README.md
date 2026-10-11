@@ -4,7 +4,7 @@ Point de départ : maquettes Stitch (`stitch_kossodo_campus_navigator.zip`, écr
 
 ## Lancer
 ```
-cd api && pip install -r requirements.txt
+cd api && pip install -r requirements-dev.txt
 export MACITE_SECRET=... MACITE_RELEVEUR_PASSWORD=... MACITE_EXPERT_PASSWORD=...
 uvicorn main:app --reload            # http://localhost:8000/docs
 cd ../web && npm install && npm run dev
@@ -61,4 +61,4 @@ Migrations : `cd api && DATABASE_URL=postgresql+psycopg://... alembic upgrade he
 Rapport complet : `docs/AUDIT.md` (défauts corrigés, défauts constatés mais non corrigés, limites). Nouveaux tests : `api/test_audit_fixes.py`, `web/src/lib/auditFixes.test.ts`.
 
 ## Frontend Vercel
-Le frontend Vite peut etre deploye sur Vercel, tandis que l'API, PostgreSQL/PostGIS et les photos restent sur le serveur Docker. Consultez [docs/DEPLOIEMENT_VERCEL.md](docs/DEPLOIEMENT_VERCEL.md) pour configurer le projet, l'URL de l'API, CORS et les deploiements Git automatiques.
+Le frontend Vite et l'API FastAPI peuvent etre déployés dans deux projets Vercel. Neon fournit PostgreSQL/PostGIS et Vercel Blob privé conserve les photos. Consultez [docs/DEPLOIEMENT_VERCEL.md](docs/DEPLOIEMENT_VERCEL.md) pour la configuration et les déploiements Git automatiques.

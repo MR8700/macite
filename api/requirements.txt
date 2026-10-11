@@ -4,6 +4,7 @@ sqlalchemy
 pydantic
 alembic
 psycopg[binary]
+vercel>=0.5.0
 python-multipart
-pytest
 httpx
+python-dotenv

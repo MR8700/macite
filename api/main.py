@@ -5,7 +5,7 @@ import hashlib, hmac, json, math, os, re, secrets, time
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 from pathlib import Path
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from places import geometry_errors, DEFAULT_BY_KIND, OPTIONAL_ROOMS, PLACE_TYPES, connectivity_warnings, contained, validate_place
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +16,14 @@ from sqlalchemy import text, JSON, Boolean, Float, Integer, String, Text, create
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///macite.db")
-# Render fournit une URL PostgreSQL générique ; l'image installe psycopg v3 (pas psycopg2).
+# Les fournisseurs PostgreSQL fournissent souvent une URL générique ; l'image installe psycopg v3.
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    pool_pre_ping=not DATABASE_URL.startswith("sqlite"),
+)
 MAX_ACC = float(os.getenv("MACITE_MAX_ACCURACY_M", "15")); CONTAIN_TOL = float(os.getenv("MACITE_CONTAIN_TOL_M", "8"))
 SECRET = load_secret()   # MACITE_ENV=production : refuse de démarrer si MACITE_SECRET est absent ou faible (security.py)
 
@@ -103,7 +107,7 @@ CLIENT_IP_HEADER = os.getenv("MACITE_CLIENT_IP_HEADER", "x-forwarded-for").strip
 def client_ip(request: Request) -> str:
     """Adresse du client selon l'en-tête défini par le proxy de confiance."""
     if TRUST_PROXY and (forwarded := request.headers.get(CLIENT_IP_HEADER)):
-        # Render/Cloudflare fournit CF-Connecting-IP, écrasé à l'edge ; Caddy append son IP au XFF.
+        # Vercel remplace XFF par l'adresse client ; Caddy ajoute son adresse à la chaîne XFF.
         return (forwarded.split(",")[-1] if CLIENT_IP_HEADER == "x-forwarded-for" else forwarded).strip() or "?"
     return request.client.host if request.client else "?"
 def get_db():
@@ -142,7 +146,11 @@ class Login(BaseModel): username: str = Field(max_length=200); password: str = F
 
 @asynccontextmanager
 async def lifespan(_app):
-    init(); yield
+    if os.getenv("MACITE_SKIP_STARTUP_MIGRATIONS", "").strip().lower() in ("1", "true", "yes"):
+        init_runtime()
+    else:
+        init()
+    yield
 app = FastAPI(title="MaCité API", version="0.1.0", lifespan=lifespan)
 ai_live = None   # jeton éphémère Gemini Live ; None = assistant vocal désactivé
 ai_provider = None   # fournisseur d'IA (Google AI Studio) ; None = assistant désactivé
@@ -154,16 +162,19 @@ Role = Literal["releveur", "expert", "admin"]
 ANY_USER = need(*ROLES)   # tout compte actif
 SYNC_ENV_PW = os.getenv("MACITE_SYNC_ENV_PASSWORDS", "").strip().lower() in ("1", "true", "yes")
 def init():
-    global ai_provider, ai_live
-    ai_provider = provider_from_env(); ai_live = live_from_env()   # MACITE_AI_PROVIDER=off par défaut
+    init_runtime()
     migrate()
     with Session(engine) as db:  # comptes initiaux : à créer via variables d'environnement, jamais codés en dur
         for role in ROLES:
             pw = os.getenv(f"MACITE_{role.upper()}_PASSWORD")
             u = db.get(User, role)
             if pw and not u: db.add(User(username=role, pw=hpw(pw), role=role, active=True))
-            elif pw and u and SYNC_ENV_PW and not check_pw(u.pw, pw): u.pw = hpw(pw); u.active = True   # opt-in (MACITE_SYNC_ENV_PASSWORDS=1) : la variable devient la référence
+            elif pw and u and SYNC_ENV_PW and not check_pw(u.pw, pw): u.pw = hpw(pw); u.active = True
         db.commit()
+
+def init_runtime():
+    global ai_provider, ai_live
+    ai_provider = provider_from_env(); ai_live = live_from_env()   # MACITE_AI_PROVIDER=off par défaut
 
 def _fail_count(db: Session, key: str, now: float) -> int:
     return db.scalar(select(func.count()).select_from(LoginFail).where(LoginFail.key == key, LoginFail.at > now - WINDOW)) or 0
@@ -285,6 +296,7 @@ def site_map(site: str, version: Optional[int] = None, db: Session = Depends(get
                                               | {"type_label": type_label(p.get("type")), "category": type_label(p.get("type"))} for p in mv.snapshot]}
 
 PHOTO_DIR = Path(os.getenv("PHOTO_DIR", "photos")); MAX_PHOTO = 2 * 1024 * 1024; MAX_PER_SURVEY = 6
+VERCEL_BLOB_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
 @app.post("/api/v1/surveys/{sid}/photos/{pid}")
 async def upload_photo(sid: str, pid: str, file: UploadFile = File(...), user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
     r = db.get(SurveyRow, sid)
@@ -299,8 +311,17 @@ async def upload_photo(sid: str, pid: str, file: UploadFile = File(...), user: U
     if known and known.survey_id != sid: raise HTTPException(409, "Identifiant de photo déjà utilisé")   # ne jamais confirmer/écraser la photo d'un autre relevé
     if known: return {"id": pid, "duplicate": True}
     if len(list(db.scalars(select(Photo).where(Photo.survey_id == sid)))) >= MAX_PER_SURVEY: raise HTTPException(409, "Trop de photos")
-    d = PHOTO_DIR / sid; d.mkdir(parents=True, exist_ok=True); f = d / f"{pid}.jpg"; f.write_bytes(data)
-    db.add(Photo(id=pid, survey_id=sid, path=str(f))); log(db, user.username, f"photo {pid} {sid}"); db.commit(); return {"id": pid}
+    if os.getenv("VERCEL") == "1" and not VERCEL_BLOB_TOKEN: raise HTTPException(503, "Stockage des photos non configuré")
+    if VERCEL_BLOB_TOKEN:
+        from vercel.blob import AsyncBlobClient
+        blob_path = f"surveys/{sid}/{pid}.jpg"
+        try: await AsyncBlobClient().put(blob_path, data, access="private", add_random_suffix=False)
+        except Exception: raise HTTPException(502, "Stockage photo indisponible")
+        stored_path = f"vercel-blob:{blob_path}"
+    else:
+        d = PHOTO_DIR / sid; d.mkdir(parents=True, exist_ok=True); f = d / f"{pid}.jpg"; f.write_bytes(data)
+        stored_path = str(f)
+    db.add(Photo(id=pid, survey_id=sid, path=stored_path)); log(db, user.username, f"photo {pid} {sid}"); db.commit(); return {"id": pid}
 
 def _can_see(db: Session, user: User, sid: str):
     r = db.get(SurveyRow, sid)
@@ -309,9 +330,15 @@ def _can_see(db: Session, user: User, sid: str):
 def list_photos(sid: str, user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
     _can_see(db, user, sid); return [p.id for p in db.scalars(select(Photo).where(Photo.survey_id == sid))]
 @app.get("/api/v1/surveys/{sid}/photos/{pid}")
-def get_photo(sid: str, pid: str, user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
+async def get_photo(sid: str, pid: str, user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
     _can_see(db, user, sid); p = db.get(Photo, pid)
     if not p or p.survey_id != sid: raise HTTPException(404, "Photo introuvable")
+    if p.path.startswith("vercel-blob:"):
+        from vercel.blob import AsyncBlobClient
+        try: blob = await AsyncBlobClient().get(p.path.removeprefix("vercel-blob:"), access="private")
+        except Exception: raise HTTPException(502, "Stockage photo indisponible")
+        if blob is None or blob.status_code != 200 or blob.stream is None: raise HTTPException(404, "Photo introuvable")
+        return StreamingResponse(blob.stream, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
     return FileResponse(p.path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 OFFLINE_MAP = Path(os.getenv("OFFLINE_MAP_PATH", "tiles/kossodo.pmtiles"))
