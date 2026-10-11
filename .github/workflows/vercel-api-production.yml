@@ -20,9 +20,6 @@ jobs:
     if: ${{ vars.VERCEL_API_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: production
-    defaults:
-      run:
-        working-directory: api
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_API_PROJECT_ID }}
@@ -32,9 +29,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Check deployment credentials
         run: |
           test -n "$VERCEL_ORG_ID"
@@ -44,10 +38,6 @@ jobs:
         run: npm install --global vercel@latest
       - name: Pull production project settings
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-      - name: Install API dependencies
-        run: pip install -r requirements.txt
-      - name: Apply database migrations and bootstrap initial users
-        run: python bootstrap_production.py
       - name: Build production output
         run: vercel build --prod --token="$VERCEL_TOKEN"
       - name: Deploy production output

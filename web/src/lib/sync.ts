@@ -73,6 +73,12 @@ export async function login(username: string, password: string) {
   if (!res.ok) throw new Error('Identifiants invalides');
   return (await res.json()) as { token: string; role: string };
 }
+export async function register(username: string, password: string) {
+  const res = await fetch(`${API}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  if (res.status === 429) throw new Error('Trop de créations de compte : réessayez plus tard.');
+  if (!res.ok) throw new Error(await detailOf(res, 'Inscription impossible.'));
+  return (await res.json()) as { username: string; role: string };
+}
 export const reviewApi = {
   /** File de validation. Avant : une session expirée (401) renvoyait {detail} et l'écran plantait sur `queue.map`. */
   list: async (t: string): Promise<Survey[]> => {

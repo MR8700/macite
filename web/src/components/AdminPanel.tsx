@@ -27,13 +27,13 @@ export function AdminPanel({ token }: { token: string }) {
       <div><b>{u.username}</b> <span className={'badge ' + (u.active ? '' : 'err')}>{u.active ? 'Actif' : 'Désactivé'}</span></div>
       <div className="row" style={{ margin: 0 }}>
         <select className="f" style={{ width: 120 }} aria-label={`Rôle de ${u.username}`} value={u.role} onChange={e => act(() => call('/users/' + u.username, 'PATCH', { role: e.target.value }), 'Rôle modifié.')}>
-          {['releveur', 'expert', 'admin'].map(r => <option key={r}>{r}</option>)}</select>
+          {['utilisateur', 'releveur', 'expert', 'admin'].map(r => <option key={r}>{r}</option>)}</select>
         <button className="btn" onClick={() => act(() => call('/users/' + u.username, 'PATCH', { active: !u.active }), u.active ? 'Compte désactivé.' : 'Compte réactivé.')}>{u.active ? 'Désactiver' : 'Réactiver'}</button></div></div>)}
     <form onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); const form = e.currentTarget;
       act(async () => { await call('/users', 'POST', { username: f.get('u'), password: f.get('p'), role: f.get('r') }); form.reset(); }, 'Compte créé.'); }}>
       <div className="row"><input className="f" style={{ flex: 1 }} name="u" placeholder="Identifiant" aria-label="Nouvel identifiant" required />
         <input className="f" style={{ flex: 1 }} name="p" type="password" placeholder="Mot de passe (10 car. min.)" aria-label="Mot de passe du nouveau compte" minLength={10} required />
-        <select className="f" style={{ width: 120 }} name="r" aria-label="Rôle du nouveau compte"><option>releveur</option><option>expert</option><option>admin</option></select>
+        <select className="f" style={{ width: 120 }} name="r" aria-label="Rôle du nouveau compte"><option>utilisateur</option><option>releveur</option><option>expert</option><option>admin</option></select>
         <button className="btn pri">Créer le compte</button></div></form>
     <h3 style={{ fontSize: 15, marginTop: 10 }}>Versions de la carte</h3>
     {!vers.length && <div className="meta">Aucune version publiée.</div>}

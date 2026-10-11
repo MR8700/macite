@@ -23,7 +23,7 @@ MACITE_EXPERT_PASSWORD=<mot de passe fort>
 MACITE_ADMIN_PASSWORD=<mot de passe fort>
 MACITE_TRUST_PROXY=1
 MACITE_CLIENT_IP_HEADER=x-forwarded-for
-MACITE_SKIP_STARTUP_MIGRATIONS=1
+MACITE_SKIP_STARTUP_MIGRATIONS=0
 MACITE_SITE=kossodo
 ```
 
@@ -37,32 +37,27 @@ Dans **Storage** du projet Vercel API, créez un Blob **Private** et activez son
 
 L'offre Hobby de Blob comprend des quotas mensuels gratuits, dont 1 Go de stockage, 10 Go de transfert, 10 000 opérations simples et 2 000 opérations avancées. Si les quotas Hobby sont dépassés, le stockage Blob est suspendu jusqu'à leur renouvellement au lieu de facturer les dépassements. Les photos de l'application sont privées et les réponses sont servies par l'API après authentification. Consultez [les quotas en vigueur](https://vercel.com/docs/vercel-blob/usage-and-pricing).
 
-`MACITE_SKIP_STARTUP_MIGRATIONS=1` évite de lancer Alembic dans les nouvelles instances serverless. Le workflow API récupère les variables Production Vercel, applique la migration et initialise les rôles avant chaque déploiement ; gardez les déploiements Git directs Vercel désactivés pour que cette étape passe toujours avant la publication.
+Avec `MACITE_SKIP_STARTUP_MIGRATIONS=0`, l'instance API applique Alembic au démarrage et crée les comptes initiaux absents depuis les secrets `MACITE_<RÔLE>_PASSWORD`. Vercel ne révèle pas les variables marquées Secret par `vercel env pull` : les migrations ne dépendent donc pas d'une copie locale de `DATABASE_URL`. Le health check après déploiement déclenche le démarrage et vérifie que la base répond. Les démarrages suivants vérifient l'état Alembic avant d'appliquer une migration éventuelle.
 
 ## 4. Projet frontend
 
 Créez un second projet Vercel sur le même dépôt, avec **Root Directory** `web`, framework Vite, Node.js 22, `npm ci`, `npm run build` et `dist` en sortie. Définissez en Production :
 
 ```env
-VITE_API_BASE_URL=https://<domaine-projet-api>/api/v1
+VITE_API_BASE_URL=https://macite-api.vercel.app/api/v1
 ```
 
 Cette variable est publique et incorporée au bundle. Ne mettez jamais de secret dans une variable `VITE_*`. Copiez l'origine exacte du site web (schéma `https://`, sans chemin) dans `MACITE_CORS_ORIGINS` sur le projet API.
 
-## 5. Déploiements GitHub automatisés
+## 5. Déploiements Git automatisés
 
-Deux workflows sont prêts : `.github/workflows/vercel-production.yml` publie `web`, et `.github/workflows/vercel-api-production.yml` publie `api`. Pour chacun des projets Vercel, récupérez l'identifiant du projet dans ses paramètres. Dans les secrets GitHub du dépôt, ajoutez :
+Les projets Vercel `macite` (frontend) et `macite-api` (API) sont reliés au dépôt privé `MR8700/maciteapp`, branche `main`. Leurs répertoires racine sont respectivement `web` et `api` ; un push sur cette branche déclenche leur déploiement Vercel. Aucun jeton GitHub Actions n'est nécessaire pour ce flux natif.
 
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID` (projet web)
-- `VERCEL_API_PROJECT_ID` (projet API)
-
-Dans les variables GitHub Actions, ajoutez `VERCEL_DEPLOY_ENABLED=true` et `VERCEL_API_DEPLOY_ENABLED=true`. Les workflows réagissent aux changements de leurs dossiers respectifs et peuvent aussi être lancés depuis l'onglet **Actions**. Désactivez les déploiements Git automatiques des deux projets Vercel pour ne pas lancer deux publications par commit.
+Les workflows `.github/workflows/vercel-production.yml` et `.github/workflows/vercel-api-production.yml` restent une alternative manuelle. Ils sont désactivés par défaut et exigent des secrets GitHub dédiés. Ne les activez pas en même temps que les déploiements Git Vercel, afin d'éviter deux déploiements par changement.
 
 ## 6. Contrôle après déploiement
 
-- Appelez `https://<domaine-api>/api/v1/health` et vérifiez le résultat `{"status":"ok"}`.
+- Appelez `https://macite-api.vercel.app/api/v1/health` et vérifiez le résultat `{"status":"ok"}`.
 - Depuis le site web final, vérifiez CORS, connexion, recherche, chargement de la carte et relevé.
 - Envoyez une photo puis vérifiez sa lecture avec un compte autorisé ; une URL Blob privée seule ne doit pas être accessible sans autorisation.
 - Vérifiez les journaux Vercel pour l'initialisation PostgreSQL, les migrations et PostGIS avant d'importer des données réelles.

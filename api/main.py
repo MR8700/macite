@@ -143,6 +143,9 @@ class SurveyIn(BaseModel):   # `id` sert de nom de dossier pour les photos : jeu
 class SyncIn(BaseModel): surveys: list[SurveyIn] = Field(max_length=200)
 class Reason(BaseModel): reason: Optional[str] = None
 class Login(BaseModel): username: str = Field(max_length=200); password: str = Field(max_length=500)
+class Register(BaseModel):
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[a-zA-Z0-9_.-]+$")
+    password: str = Field(min_length=10, max_length=200)
 
 @asynccontextmanager
 async def lifespan(_app):
@@ -157,9 +160,10 @@ ai_provider = None   # fournisseur d'IA (Google AI Studio) ; None = assistant d�
 cors_origins = [origin.strip() for origin in os.getenv("MACITE_CORS_ORIGINS", "").split(",") if origin.strip()]
 if cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["*"], allow_headers=["Authorization", "Content-Type"])
-ROLES = ("releveur", "expert", "admin")
-Role = Literal["releveur", "expert", "admin"]
+ROLES = ("releveur", "expert", "admin", "utilisateur")
+Role = Literal["releveur", "expert", "admin", "utilisateur"]
 ANY_USER = need(*ROLES)   # tout compte actif
+SURVEY_USER = need("admin")
 SYNC_ENV_PW = os.getenv("MACITE_SYNC_ENV_PASSWORDS", "").strip().lower() in ("1", "true", "yes")
 def init():
     init_runtime()
@@ -196,6 +200,26 @@ def login(b: Login, request: Request, db: Session = Depends(get_db)):
     db.commit()
     return {"token": sign(u.username), "role": u.role}
 
+@app.post("/api/v1/auth/register", status_code=201)
+def register(b: Register, request: Request, db: Session = Depends(get_db)):
+    """Inscription publique : le rôle utilisateur ne donne aucun droit de relevé ni d'administration."""
+    ip = client_ip(request); now = time.time(); key = f"register:{ip}"
+    db.execute(delete(LoginFail).where(LoginFail.at <= now - 600))
+    recent = db.scalar(select(func.count()).select_from(LoginFail).where(LoginFail.key == key, LoginFail.at > now - 600)) or 0
+    if recent >= 5:
+        raise HTTPException(429, "Trop de créations de compte depuis cette adresse : réessayez plus tard.")
+    db.add(LoginFail(key=key, at=now)); db.commit()
+    if db.get(User, b.username):
+        raise HTTPException(409, "Identifiant indisponible")
+    u = User(username=b.username, pw=hpw(b.password), role="utilisateur", active=True)
+    db.add(u); log(db, b.username, "self registration")
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(409, "Identifiant indisponible")
+    return {"username": u.username, "role": u.role}
+
 class PwChange(BaseModel): current: str; new: str = Field(min_length=10, max_length=200)
 class PwReset(BaseModel): new: str = Field(min_length=10, max_length=200)
 @app.post("/api/v1/auth/password")
@@ -204,7 +228,7 @@ def change_password(b: PwChange, user: User = Depends(ANY_USER), db: Session = D
     user.pw = hpw(b.new); log(db, user.username, "password change"); db.commit(); return {"ok": True}
 
 @app.post("/api/v1/sync")
-def sync(b: SyncIn, user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
+def sync(b: SyncIn, user: User = Depends(SURVEY_USER), db: Session = Depends(get_db)):
     out = []
     for s in b.surveys:
         try: s.check()
@@ -232,7 +256,7 @@ def dump(r: SurveyRow): return {c: getattr(r, c) for c in ("id", "kind", "name",
 def surveys(status: Optional[str] = None, limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0), user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
     q = select(SurveyRow).order_by(SurveyRow.id).limit(limit).offset(offset)   # sans ORDER BY, la pagination n'est pas déterministe
     if status: q = q.where(SurveyRow.status == status)
-    if user.role == "releveur": q = q.where(SurveyRow.owner == user.username)
+    if user.role in ("releveur", "utilisateur"): q = q.where(SurveyRow.owner == user.username)
     return [dump(r) for r in db.scalars(q)]
 
 def transition(db, user, sid, status, reason=None):
@@ -298,9 +322,9 @@ def site_map(site: str, version: Optional[int] = None, db: Session = Depends(get
 PHOTO_DIR = Path(os.getenv("PHOTO_DIR", "photos")); MAX_PHOTO = 2 * 1024 * 1024; MAX_PER_SURVEY = 6
 VERCEL_BLOB_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
 @app.post("/api/v1/surveys/{sid}/photos/{pid}")
-async def upload_photo(sid: str, pid: str, file: UploadFile = File(...), user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
+async def upload_photo(sid: str, pid: str, file: UploadFile = File(...), user: User = Depends(SURVEY_USER), db: Session = Depends(get_db)):
     r = db.get(SurveyRow, sid)
-    if not r or (user.role == "releveur" and r.owner != user.username): raise HTTPException(404, "Relevé introuvable")
+    if not r or (user.role in ("releveur", "utilisateur") and r.owner != user.username): raise HTTPException(404, "Relevé introuvable")
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sid): raise HTTPException(422, "Identifiant de relevé invalide")   # anciens relevés créés avant la restriction du jeu de caractères
     if r.status in ("valide", "publie"): raise HTTPException(409, "Relevé déjà validé : photos non modifiables")
     if not (0 < len(pid) <= 64 and all(c.isalnum() or c == "-" for c in pid)): raise HTTPException(422, "Identifiant invalide")
@@ -325,7 +349,7 @@ async def upload_photo(sid: str, pid: str, file: UploadFile = File(...), user: U
 
 def _can_see(db: Session, user: User, sid: str):
     r = db.get(SurveyRow, sid)
-    if not r or (user.role == "releveur" and r.owner != user.username): raise HTTPException(404, "Relevé introuvable")
+    if not r or (user.role in ("releveur", "utilisateur") and r.owner != user.username): raise HTTPException(404, "Relevé introuvable")
 @app.get("/api/v1/surveys/{sid}/photos")
 def list_photos(sid: str, user: User = Depends(ANY_USER), db: Session = Depends(get_db)):
     _can_see(db, user, sid); return [p.id for p in db.scalars(select(Photo).where(Photo.survey_id == sid))]

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Map as MLMap } from 'maplibre-gl';
-import { Map as MapIcon, PenLine, RefreshCw, ShieldCheck, Settings, Search, WifiOff, Navigation, Building2, Sparkles, Mountain, Box, Compass, Layers } from 'lucide-react';
+import { Map as MapIcon, PenLine, RefreshCw, ShieldCheck, Settings, Search, WifiOff, Navigation, Building2, Sparkles, Mountain, Box, Compass, Layers, Menu, X, UserRound, LogIn } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { MapView, type Feat } from './components/MapView';
 import { SurveyPanel, emptySurvey } from './components/SurveyPanel';
@@ -9,7 +9,7 @@ import { STATUS_LABEL, haversine, pathLength, type LngLat } from './lib/geo';
 import type { Route } from './lib/graph';
 import { buildNavGraph, tagLabel, type Leg, type NavPlace } from './lib/nav';
 import { computeItinerary, outcomeMessage, type NavOutcome } from './lib/itinerary';
-import { detailOf, login, pullPublished, pullSurveyStatuses, pushSurveys, reviewApi, SESSION_EXPIRED } from './lib/sync';
+import { detailOf, login, register, pullPublished, pullSurveyStatuses, pushSurveys, reviewApi, SESSION_EXPIRED } from './lib/sync';
 import { QrScanner } from './components/QrScanner';
 import { PlacesPanel } from './components/PlacesPanel';
 import { AdminPanel } from './components/AdminPanel';
@@ -25,6 +25,8 @@ type Tab = 'carte' | 'releve' | 'sync' | 'valider' | 'lieux' | 'admin' | 'assist
 const readAuth = (): { token: string; role: string } | null => { try { const a = JSON.parse(localStorage.getItem('macite-auth') ?? 'null'); return a && typeof a.token === 'string' && typeof a.role === 'string' ? a : null; } catch { return null; } };
 export function App() {
   const [tab, setTab] = useState<Tab>('carte');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [q, setQ] = useState(''); const [sugg, setSugg] = useState<PublishedPlace[]>([]);
   const [sel, setSel] = useState<PublishedPlace | null>(null); const [focus, setFocus] = useState<LngLat | null>(null);
@@ -50,7 +52,7 @@ export function App() {
   const filterTypes: Record<string, string[]> = { Tous: [], Bâtiments: ['batiment', 'aile'], Services: ['service', 'infirmerie', 'sanitaires', 'conciergerie'], Chambres: ['chambre', 'salle_etude', 'salle_conference'] };
   const visiblePlaces = activeFilter === 'Tous' ? published : published.filter(p => filterTypes[activeFilter]?.includes(p.type ?? ''));
   const feats: Feat[] = visiblePlaces.map(p => ({ id: p.id, kind: p.kind, name: p.name, points: p.points, type: p.type, level: p.level }));
-  const draftFeat: Feat | null = tab === 'releve' ? { id: survey.id, kind: survey.kind, name: survey.name, points: survey.points } : null;
+  const draftFeat: Feat | null = tab === 'releve' && auth?.role === 'admin' ? { id: survey.id, kind: survey.kind, name: survey.name, points: survey.points } : null;
 
   // Déplacement (position manuelle → précision inconnue) ou suppression d'un sommet.
   const editPoint = (i: number, p: LngLat | null) => setSurvey(s => p
@@ -79,12 +81,25 @@ export function App() {
   const doLogin = async (f: FormData) => {
     try { const a = await login(String(f.get('u')), String(f.get('p'))); setAuth(a); localStorage.setItem('macite-auth', JSON.stringify(a)); } catch (e) { alert((e as Error).message); }
   };
+  const doRegister = async (f: FormData) => {
+    try {
+      const username = String(f.get('u')), password = String(f.get('p'));
+      await register(username, password);
+      const a = await login(username, password);
+      setAuth(a); localStorage.setItem('macite-auth', JSON.stringify(a)); setStatus('Compte créé. Vous êtes connecté.');
+    } catch (e) { setStatus((e as Error).message); }
+  };
   const [status, setStatus] = useState(''); const [reviewMsg, setReviewMsg] = useState('');   // deux messages distincts : celui de « Synchro » ne doit pas apparaître dans « Valider »
   const expire = () => { setAuth(null); localStorage.removeItem('macite-auth'); };
   const failMsg = (e: unknown) => { const m = (e as Error).message; if (m === SESSION_EXPIRED) expire(); return m; };
   const sync = async () => {
     if (!auth) return setStatus('Connectez-vous pour synchroniser.');
     try {
+      if (auth.role === 'utilisateur') {
+        const m = await pullPublished();
+        setStatus(`Carte v${m.version} (${m.count} lieux) téléchargée.`);
+        return;
+      }
       const r = await pushSurveys(auth.token); const m = await pullPublished(); const n = await pullSurveyStatuses(auth.token);
       setStatus(`Envoyés : ${r.pushed} · conflits : ${r.conflicts} · erreurs : ${r.errors}${r.photoErrors ? ` · photos non envoyées : ${r.photoErrors}` : ''} · statuts mis à jour : ${n} · carte v${m.version} (${m.count} lieux) téléchargée.`);
     } catch (e) { const m = failMsg(e); setStatus(m === SESSION_EXPIRED ? m : 'Échec de synchronisation : ' + m); }
@@ -123,10 +138,13 @@ export function App() {
     loadQueue();
   };
   const canReview = auth && ['expert', 'admin'].includes(auth.role);
+  const canSurvey = auth?.role === 'admin';
+  useEffect(() => { if (tab === 'releve' && !canSurvey) setTab('carte'); }, [tab, canSurvey]);
+  const selectTab = (next: Tab) => { setTab(next); setMenuOpen(false); if (next === 'valider') loadQueue(); };
 
   return (<div className="app">
-    <MapView published={feats} draft={draftFeat} route={route ? legs.map(l => ({ coords: l.coords, on: shownTag === 'all' || l.tag === shownTag })) : null} user={gps.fix?.p ?? null} heading={gps.fix?.heading ?? (compass.heading?.reliable ? compass.heading.deg : null)} followGps={gpsFollow} terrain={terrain} threeD={threeD} level={activeLevel} focus={focus} hasLocal={!!offline} onEditPoint={tab === 'releve' ? editPoint : undefined} onSelect={id => { const place = published.find(p => p.id === id); if (place) goTo(place); }} onReady={m => (map.current = m)} />
-    {tab === 'releve' && <div className="cross" aria-hidden />}
+    <MapView published={feats} draft={draftFeat} route={route ? legs.map(l => ({ coords: l.coords, on: shownTag === 'all' || l.tag === shownTag })) : null} user={gps.fix?.p ?? null} heading={gps.fix?.heading ?? (compass.heading?.reliable ? compass.heading.deg : null)} followGps={gpsFollow} terrain={terrain} threeD={threeD} level={activeLevel} focus={focus} hasLocal={!!offline} onEditPoint={tab === 'releve' && canSurvey ? editPoint : undefined} onSelect={id => { const place = published.find(p => p.id === id); if (place) goTo(place); }} onReady={m => (map.current = m)} />
+    {tab === 'releve' && canSurvey && <div className="cross" aria-hidden />}
     <div className="top">
       <img className="logo" src="/icon.svg" alt="MaCité" />
       <label className="search"><Search size={18} color="#6B7785" />
@@ -166,13 +184,13 @@ export function App() {
       {navMsg && <div className="err" role="alert">{navMsg}</div>}
       {canReview && graph.warnings.length > 0 && <details className="meta"><summary>⚠ {graph.warnings.length} élément(s) non relié(s) au réseau : des itinéraires peuvent manquer</summary>
         <ul style={{ paddingLeft: 18 }}>{graph.warnings.slice(0, 8).map((w, i) => <li key={i}>{w}</li>)}</ul></details>}</div>}
-    {tab === 'carte' && !sel && !published.length && <div className="sheet campus-empty"><div className="campus-title"><div><span className="eyebrow">KOSSODO NAVIGATEUR</span><h2>Bienvenue sur MaCité</h2></div><span className="online-pill"><i className={online ? '' : 'offline'} />{online ? 'En ligne' : 'Hors ligne'}</span></div><div className="meta">Ma cité, je m’y retrouve. Aucune carte publiée n’est encore enregistrée sur cet appareil.</div><div className="row"><button className="btn pri" onClick={() => setTab('releve')}><PenLine size={16} />Faire un relevé</button><button className="btn" onClick={() => setTab('sync')}><RefreshCw size={16} />Synchroniser la carte</button></div><div className="map-attribution-note">Relief : Mapzen / AWS Open Data. Carte : OpenStreetMap.</div></div>}
+    {tab === 'carte' && !sel && !published.length && <div className="sheet campus-empty"><div className="campus-title"><div><span className="eyebrow">KOSSODO NAVIGATEUR</span><h2>Bienvenue sur MaCité</h2></div><span className="online-pill"><i className={online ? '' : 'offline'} />{online ? 'En ligne' : 'Hors ligne'}</span></div><div className="meta">Ma cité, je m’y retrouve. Aucune carte publiée n’est encore enregistrée sur cet appareil.</div><div className="row">{canSurvey && <button className="btn pri" onClick={() => selectTab('releve')}><PenLine size={16} />Faire un relevé</button>}<button className="btn" onClick={() => selectTab('sync')}><RefreshCw size={16} />Synchroniser la carte</button></div><div className="map-attribution-note">Relief : Mapzen / AWS Open Data. Carte : OpenStreetMap.</div></div>}
     {tab === 'carte' && !sel && published.length > 0 && <div className="sheet campus-home"><div className="campus-title"><div><span className="eyebrow">KOSSODO CAMPUS</span><h2>Explorer le campus</h2></div><span className="online-pill"><i className={gps.fix ? '' : 'offline'} />{gps.fix ? `GPS ±${Math.round(gps.fix.acc)} m` : 'GPS prêt'}</span></div><div className="campus-stats"><div><b>{published.length}</b><span>lieux connus</span></div><div><b>{published.filter(p => ['batiment', 'aile'].includes(p.type ?? '')).length}</b><span>bâtiments</span></div><div><b>{published.filter(p => ['service', 'infirmerie', 'sanitaires'].includes(p.type ?? '')).length}</b><span>services</span></div></div><div className="home-places">{published.slice(0, 3).map(p => <button key={p.id} onClick={() => goTo(p)}><span className="place-symbol"><Building2 size={17} /></span><span><b>{p.name}</b><small>{p.type_label}{p.parent_name ? ` · ${p.parent_name}` : ''}</small></span><Navigation size={16} /></button>)}</div><div className="map-attribution-note">Terrain Mapzen / AWS Open Data · Carte OpenStreetMap</div></div>}
-    {tab === 'releve' && <div className="sheet survey-sheet"><SurveyPanel s={survey} onChange={setSurvey} fix={gps.fix} gps={gps.state} startGps={gps.start}
+    {tab === 'releve' && canSurvey && <div className="sheet survey-sheet"><SurveyPanel s={survey} onChange={setSurvey} fix={gps.fix} gps={gps.state} startGps={gps.start}
       center={() => { const c = map.current!.getCenter(); return [c.lng, c.lat]; }} onDone={() => { setSurvey(emptySurvey()); setTab('sync'); }} /></div>}
     {tab === 'sync' && <div className="sheet"><div className="campus-title"><h2>Synchronisation</h2><span className="online-pill"><i className={online ? '' : 'offline'} />{online ? 'En ligne' : 'Hors ligne'}</span></div>
       <div className="meta">{online ? 'Connecté' : 'Hors ligne : les relevés restent sur l’appareil.'}</div>
-      {!auth ? <form onSubmit={e => { e.preventDefault(); doLogin(new FormData(e.currentTarget)); }}><input className="f" name="u" placeholder="Identifiant" aria-label="Identifiant" /><input className="f" name="p" type="password" placeholder="Mot de passe" aria-label="Mot de passe" /><button className="btn pri">Se connecter</button></form>
+      {!auth ? <><div className="row account-switch"><button type="button" className={'btn' + (!registering ? ' pri' : '')} onClick={() => setRegistering(false)}>Se connecter</button><button type="button" className={'btn' + (registering ? ' pri' : '')} onClick={() => setRegistering(true)}>Créer un compte</button></div><form onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); registering ? doRegister(f) : doLogin(f); }}><input className="f" name="u" autoComplete="username" minLength={3} maxLength={40} pattern="[a-zA-Z0-9_.-]+" required placeholder="Identifiant (3 à 40 caractères)" aria-label="Identifiant" /><input className="f" name="p" type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={registering ? 10 : undefined} required placeholder={registering ? 'Mot de passe (10 caractères minimum)' : 'Mot de passe'} aria-label="Mot de passe" />{registering && <div className="meta">Le compte utilisateur donne accès à la carte et à l’assistant. Les relevés sont réservés aux administrateurs.</div>}<button className="btn pri">{registering ? 'Créer mon compte' : 'Se connecter'}</button></form></>
         : <div className="row"><span className="badge">Rôle : {auth.role}</span><button className="btn pri" onClick={sync} disabled={!online}><RefreshCw size={16} />Synchroniser</button><button className="btn" onClick={expire}>Déconnexion</button></div>}
       {status && <div className="meta" aria-live="polite">{status}</div>}
       <h3 style={{ fontSize: 15, marginTop: 10 }}>Fond de carte hors ligne</h3>
@@ -180,14 +198,14 @@ export function App() {
       <div className="row"><button className="btn" disabled={!online || dl !== null} onClick={async () => { setDl(0); setDlMsg(''); try { await downloadOfflineMap(setDl); } catch (e) { setDlMsg((e as Error).message); } setDl(null); }}>{dl !== null ? `Téléchargement ${Math.round(dl * 100)} %` : offline ? 'Mettre à jour' : 'Télécharger la carte'}</button>
         {offline && <button className="btn" onClick={() => removeOfflineMap()}>Supprimer</button>}</div>
       {dl !== null && <progress value={dl} max={1} style={{ width: '100%' }} />}{dlMsg && <div className="err" role="alert">{dlMsg}</div>}
-      <h3 style={{ fontSize: 15, marginTop: 10 }}>Mes relevés ({surveys.length})</h3>
+      {canSurvey && <><h3 style={{ fontSize: 15, marginTop: 10 }}>Mes relevés ({surveys.length})</h3>
       {surveys.map(s => <div key={s.id} className="gps" style={{ justifyContent: 'space-between' }}>
         <div><b>{s.name || '(sans nom)'}</b><div className="meta">{s.kind} · {s.points.length} pt · {s.kind === 'path' ? Math.round(pathLength(s.points)) + ' m' : ''}</div>
           {s.status === 'a_corriger' && <div className="err" role="alert">Renvoyé pour correction{s.rejectReason ? ' : ' + s.rejectReason : ''}</div>}
           {s.syncError && <div className="err">{s.syncError}</div>}</div>
         <div><span className={'badge ' + (s.status === 'a_corriger' ? 'warn' : '')}>{STATUS_LABEL[s.status]}</span><div className="meta">{s.synced ? 'Synchronisé' : 'Local seul'}</div>
           {['brouillon', 'en_cours', 'a_corriger'].includes(s.status) && <button className="btn" style={{ minHeight: 36 }} onClick={() => { setSurvey(s); setTab('releve'); }}>Reprendre</button>}</div></div>)}
-      {!surveys.length && <div className="meta">Aucun relevé pour l’instant.</div>}</div>}
+      {!surveys.length && <div className="meta">Aucun relevé pour l’instant.</div>}</>}</div>}
     {tab === 'valider' && canReview && <div className="sheet"><h2>Relevés à vérifier</h2>
       <div className="row"><button className="btn" onClick={loadQueue}>Actualiser</button>
         <button className="btn pri" onClick={publishVersion}>Publier une version</button></div>
@@ -202,9 +220,19 @@ export function App() {
     {tab === 'lieux' && canReview && <div className="sheet"><PlacesPanel token={auth!.token} role={auth!.role} onFocus={p => { setFocus([...p]); setTab('carte'); }} /></div>}
     {tab === 'assistant' && <div className="sheet"><AssistantPanel places={published} position={gps.fix ? { lat: gps.fix.p[1], lon: gps.fix.p[0] } : undefined} onShowPlace={aiShow} onNavigate={aiNavigate} onLogin={() => setTab('sync')} /></div>}
     {tab === 'admin' && auth?.role === 'admin' && <div className="sheet"><AdminPanel token={auth.token} /></div>}
+    {menuOpen && <><button className="menu-scrim" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)} /><aside className="menu-drawer" aria-label="Menu principal"><div className="menu-head"><div><b>MaCité</b><div className="meta">{auth ? <><UserRound size={14} /> {auth.role}</> : 'Mode visiteur'}</div></div><button className="ic" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)}><X size={19} /></button></div>
+      <button className="menu-item" onClick={() => selectTab('carte')}><MapIcon size={19} />Carte</button>
+      <button className="menu-item" onClick={() => selectTab('sync')}><RefreshCw size={19} />Synchronisation</button>
+      {canSurvey && <button className="menu-item" onClick={() => selectTab('releve')}><PenLine size={19} />Relevés</button>}
+      {canReview && <><button className="menu-item" onClick={() => selectTab('valider')}><ShieldCheck size={19} />Validation</button><button className="menu-item" onClick={() => selectTab('lieux')}><Building2 size={19} />Gestion des lieux</button></>}
+      {auth?.role === 'admin' && <button className="menu-item" onClick={() => selectTab('admin')}><Settings size={19} />Administration</button>}
+      <button className="menu-item" onClick={() => selectTab('assistant')}><Sparkles size={19} />Assistant IA</button>
+      {auth ? <button className="menu-item" onClick={() => { expire(); selectTab('carte'); }}><LogIn size={19} />Déconnexion</button> : <button className="menu-item" onClick={() => selectTab('sync')}><LogIn size={19} />Connexion / inscription</button>}
+    </aside></>}
     <nav className="nav" aria-label="Navigation principale">
-      {([['carte', MapIcon, 'Carte'], ['releve', PenLine, 'Relevé'], ['sync', RefreshCw, 'Synchro'], ['assistant', Sparkles, 'Assistant'], ...(canReview ? [['valider', ShieldCheck, 'Valider'], ['lieux', Building2, 'Lieux']] : []), ...(auth?.role === 'admin' ? [['admin', Settings, 'Admin']] : [])] as [Tab, typeof MapIcon, string][]).map(([t, I, l]) =>
-        <button key={t} className={tab === t ? 'on' : ''} onClick={() => { setTab(t); if (t === 'valider') loadQueue(); }} aria-current={tab === t}><I size={22} />{l}</button>)}
+      {([['carte', MapIcon, 'Carte'], ['sync', RefreshCw, 'Synchro'], ['assistant', Sparkles, 'Assistant']] as [Tab, typeof MapIcon, string][]).map(([t, I, l]) =>
+        <button key={t} className={tab === t ? 'on' : ''} onClick={() => selectTab(t)} aria-current={tab === t}><I size={22} />{l}</button>)}
+      <button className={menuOpen ? 'on' : ''} onClick={() => setMenuOpen(v => !v)} aria-expanded={menuOpen} aria-label="Ouvrir le menu"><Menu size={22} />Menu</button>
     </nav>
   </div>);
 }

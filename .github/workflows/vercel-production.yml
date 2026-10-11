@@ -20,9 +20,6 @@ jobs:
     if: ${{ vars.VERCEL_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: production
-    defaults:
-      run:
-        working-directory: web
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
