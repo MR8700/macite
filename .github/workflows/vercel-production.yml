@@ -1,0 +1,47 @@
+name: Deploy web to Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/vercel-production.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ vars.VERCEL_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: web
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check deployment credentials
+        run: |
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
+          test -n "$VERCEL_TOKEN"
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+      - name: Pull production project settings
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - name: Build production output
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+      - name: Deploy production output
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

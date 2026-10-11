@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text, JSON, Boolean, Float, Integer, String, Text, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-engine = create_engine(os.getenv("DATABASE_URL", "sqlite:///macite.db"), connect_args={"check_same_thread": False} if os.getenv("DATABASE_URL", "sqlite").startswith("sqlite") else {})
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///macite.db")
+# Render fournit une URL PostgreSQL générique ; l'image installe psycopg v3 (pas psycopg2).
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
 MAX_ACC = float(os.getenv("MACITE_MAX_ACCURACY_M", "15")); CONTAIN_TOL = float(os.getenv("MACITE_CONTAIN_TOL_M", "8"))
 SECRET = load_secret()   # MACITE_ENV=production : refuse de démarrer si MACITE_SECRET est absent ou faible (security.py)
 
@@ -95,9 +99,12 @@ def parse_token(tok: str) -> Optional[str]:
 MAX_FAILS, WINDOW = 5, 300
 MAX_FAILS_PER_IP = int(os.getenv("MACITE_LOGIN_MAX_FAILS_PER_IP", "30"))   # filet de sécurité contre un client qui essaie beaucoup d'identifiants
 TRUST_PROXY = os.getenv("MACITE_TRUST_PROXY", "").strip().lower() in ("1", "true", "yes")
+CLIENT_IP_HEADER = os.getenv("MACITE_CLIENT_IP_HEADER", "x-forwarded-for").strip().lower()
 def client_ip(request: Request) -> str:
-    """Adresse du client. Derrière Caddy (MACITE_TRUST_PROXY=1), on lit la DERNIÈRE valeur de X-Forwarded-For (celle ajoutée par notre proxy, non falsifiable par le client)."""
-    if TRUST_PROXY and (xff := request.headers.get("x-forwarded-for")): return xff.split(",")[-1].strip() or "?"
+    """Adresse du client selon l'en-tête défini par le proxy de confiance."""
+    if TRUST_PROXY and (forwarded := request.headers.get(CLIENT_IP_HEADER)):
+        # Render/Cloudflare fournit CF-Connecting-IP, écrasé à l'edge ; Caddy append son IP au XFF.
+        return (forwarded.split(",")[-1] if CLIENT_IP_HEADER == "x-forwarded-for" else forwarded).strip() or "?"
     return request.client.host if request.client else "?"
 def get_db():
     with Session(engine) as s: yield s
