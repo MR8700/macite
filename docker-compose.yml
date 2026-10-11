@@ -1,0 +1,37 @@
+# Lancement : cp .env.example .env (renseigner TOUTES les valeurs) puis docker compose up -d --build
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: macite
+      POSTGRES_USER: macite
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?à définir}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U macite"], interval: 5s, retries: 10 }
+  api:
+    build: ./api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://macite:${POSTGRES_PASSWORD}@db/macite
+      PHOTO_DIR: /app/photos
+      MACITE_ENV: production            # refuse de démarrer sans MACITE_SECRET solide
+      MACITE_SECRET: ${MACITE_SECRET:?à définir (32 caractères minimum)}
+      MACITE_TRUST_PROXY: ${MACITE_TRUST_PROXY:-1}   # l'API est derrière Caddy
+    volumes: ["./tiles:/app/tiles:ro", "photos:/app/photos"]
+    depends_on: { db: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"], interval: 30s, retries: 3, start_period: 20s }
+  web:
+    build: ./web
+    restart: unless-stopped
+    depends_on: [api]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      MACITE_DOMAIN: ${MACITE_DOMAIN:?à définir}
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    depends_on: [web]
+volumes: { pgdata: {}, photos: {}, caddy_data: {}, caddy_config: {} }

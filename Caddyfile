@@ -1,0 +1,11 @@
+# HTTPS automatique (certificat Let's Encrypt) pour le domaine défini dans .env : MACITE_DOMAIN=carte.exemple.bf
+{$MACITE_DOMAIN} {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "geolocation=(self), camera=(self), microphone=()"
+	}
+	reverse_proxy web:80
+}

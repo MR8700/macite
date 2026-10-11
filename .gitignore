@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.vercel
+web/node_modules
+node_modules/
+web/dist
+api/__pycache__
+api/.pytest_cache
+api/macite.db
+api/photos
+backups
