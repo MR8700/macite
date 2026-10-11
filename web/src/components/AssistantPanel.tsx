@@ -20,11 +20,11 @@ export function LiveConsentNotice({ onAccept }: { onAccept: () => void }) {
     <div className="row"><button className="btn pri" onClick={() => { giveLiveConsent(); onAccept(); }}>J’accepte la conversation vocale</button></div></div>);
 }
 
-interface Props { places: Place[]; position?: { lat: number; lon: number }; onShowPlace(p: AiPlace): boolean; onNavigate(p: AiPlace): NavOutcome }
+interface Props { places: Place[]; position?: { lat: number; lon: number }; onShowPlace(p: AiPlace): boolean; onNavigate(p: AiPlace): NavOutcome; onLogin(): void }
 interface Msg { who: 'me' | 'ai'; text: string; options?: AiPlace[]; note?: string }
 const label = (o: AiPlace) => o.name + (o.parent_name ? ` (${o.parent_name})` : '');
 
-export function AssistantPanel({ places, position, onShowPlace, onNavigate }: Props) {
+export function AssistantPanel({ places, position, onShowPlace, onNavigate, onLogin }: Props) {
   const [enabled, setEnabled] = useState<boolean | null>(null); const [consent, setConsent] = useState(hasAiConsent());
   const [msgs, setMsgs] = useState<Msg[]>([]); const [text, setText] = useState(''); const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false); const [aloud, setAloud] = useState(false); const [quota, setQuota] = useState<AiQuota | null>(null);
@@ -37,7 +37,7 @@ export function AssistantPanel({ places, position, onShowPlace, onNavigate }: Pr
   const stop = useRef<() => void>(() => {}); const end = useRef<HTMLDivElement>(null);
   useEffect(() => { aiStatus().then(setEnabled); if (isLiveSupported()) aiLiveStatus().then(setLiveOn); return () => { stop.current(); toggler.current?.stop(); }; }, []);
   useEffect(() => { end.current?.scrollIntoView?.({ behavior: 'smooth' }); }, [msgs]);
-  useEffect(() => { if (enabled && consent) refreshQuota(); }, [enabled, consent]);
+  useEffect(() => { if (enabled && consent && hasAiSession()) refreshQuota(); }, [enabled, consent]);
   const push = (m: Msg) => setMsgs(x => [...x, m]); pushRef.current = push;
   const say = (t: string) => { if (aloud) speak(t); };
   const missing = () => push({ who: 'ai', text: 'Ce lieu n’est pas dans la carte téléchargée sur cet appareil : synchronisez (onglet Synchro), puis réessayez.' });
@@ -52,8 +52,8 @@ export function AssistantPanel({ places, position, onShowPlace, onNavigate }: Pr
     push({ who: 'ai', text, options: r.action === 'clarify' ? r.options : r.action === 'list' ? r.places : undefined, note: r.degraded ? 'Mode simplifié (IA indisponible).' : undefined });
     say(text);
   }
-  function local(q: string) {      // sans réseau ni IA : recherche approximative locale (même algorithme que le serveur)
-    const hits = rank(q, withParentNames(places), 4); const note = 'Hors ligne : recherche locale.';
+  function local(q: string, note = 'Hors ligne : recherche locale.') {      // sans réseau ni IA : recherche approximative locale (même algorithme que le serveur)
+    const hits = rank(q, withParentNames(places), 4);
     if (!hits.length) return push({ who: 'ai', text: 'Je ne trouve pas ce lieu dans les données de MaCité.', note });
     if (hits.length === 1 || hits[0].score - hits[1].score >= 0.15) { if (!onShowPlace(hits[0])) missing(); else push({ who: 'ai', text: `${label(hits[0])}. Je l’affiche sur la carte.`, note }); return; }
     push({ who: 'ai', text: 'Vouliez-vous dire :', options: hits, note });
@@ -63,6 +63,8 @@ export function AssistantPanel({ places, position, onShowPlace, onNavigate }: Pr
     // 1) Désignation sans ambiguïté (« bâtiment D3 ») : réponse locale, aucun appel d'IA, aucun quota consommé.
     const sure = confidentLocalMatch(q, places);
     if (sure && onShowPlace(sure)) { const t = `${label(sure)}. Je l’affiche sur la carte.`; push({ who: 'ai', text: t, note: 'Réponse locale : aucune requête IA utilisée.' }); say(t); return; }
+    if (!hasAiSession()) { local(q, 'Mode local : connectez-vous dans Synchro pour activer les réponses IA.'); return; }
+    if (!enabled) { local(q, 'IA distante indisponible : recherche locale.'); return; }
     // 2) Quota du jour épuisé : inutile d'envoyer une requête qui sera refusée (429), on bascule directement sur la recherche locale.
     if (quota && quota.remaining <= 0) { push({ who: 'ai', text: 'Quota quotidien de l’assistant atteint : recherche locale uniquement.' }); local(q); return; }
     setBusy(true);
@@ -81,12 +83,13 @@ export function AssistantPanel({ places, position, onShowPlace, onNavigate }: Pr
   function liveToggle() { toggler.current?.toggle(); }   // « Arrêter » marche à toutes les phases ; un double clic arrête la session au lieu d'en ouvrir une seconde
   function revokeLive() { toggler.current?.stop(); revokeLiveConsent(); setLiveConsent(false); }   // retire le consentement vocal ET coupe toute session
 
+  const signedIn = hasAiSession();
   if (enabled === null) return <div className="meta">Chargement…</div>;
-  if (!hasAiSession()) return <div className="meta">Connectez-vous (onglet Synchro) pour utiliser l’assistant.</div>;
-  if (!enabled) return <div><h2 style={{ fontSize: 18 }}><Sparkles size={16} /> Assistant</h2><div className="meta">L’assistant IA n’est pas activé sur ce serveur (ou le serveur est injoignable). La recherche de la carte reste disponible, y compris hors ligne.</div></div>;
-  if (!consent) return <div><h2 style={{ fontSize: 18 }}><Sparkles size={16} /> Assistant</h2><ConsentNotice onAccept={() => setConsent(true)} /></div>;
+  if (signedIn && enabled && !consent) return <div><h2 style={{ fontSize: 18 }}><Sparkles size={16} /> Assistant</h2><ConsentNotice onAccept={() => setConsent(true)} /></div>;
   return (<section aria-label="MaCité Assistant">
     <h2 style={{ fontSize: 18 }}><Sparkles size={16} /> MaCité Assistant</h2>
+    {!signedIn && <div className="gps" role="status"><div><b>Assistant MaCité</b><div className="meta">{places.length ? 'Mode visiteur : recherche locale dans les lieux synchronisés.' : 'Téléchargez d’abord la carte dans Synchro pour rechercher des lieux hors ligne.'} Connectez-vous pour activer Gemini texte et la conversation vocale.</div></div><button className="btn" type="button" onClick={onLogin}>Connexion / carte</button></div>}
+    {signedIn && !enabled && <div className="meta" role="status">L’IA distante est désactivée ou injoignable. La recherche locale reste disponible.</div>}
     <div style={{ maxHeight: '38vh', overflowY: 'auto' }} aria-live="polite">
       {!msgs.length && <div className="meta">Exemples : « Où se trouve le bâtiment D3 ? », « Où trouver un point d’eau ? », « Comment aller au terrain de foot ? »</div>}
       {msgs.map((m, i) => <div key={i} style={{ margin: '6px 0', textAlign: m.who === 'me' ? 'right' : 'left' }}>
@@ -96,14 +99,14 @@ export function AssistantPanel({ places, position, onShowPlace, onNavigate }: Pr
       <div ref={end} /></div>
     <form className="row" onSubmit={e => { e.preventDefault(); send(text); }}>
       <input className="f" style={{ flex: 1 }} value={text} maxLength={500} onChange={e => setText(e.target.value)} placeholder="Où se trouve le bâtiment D3 ?" aria-label="Votre question" />
-      {isSttSupported() && <button type="button" className={'btn' + (listening ? ' pri' : '')} onClick={mic} aria-pressed={listening} aria-label={listening ? 'Arrêter la dictée' : 'Dicter'}><Mic size={16} /></button>}
+      {signedIn && isSttSupported() && <button type="button" className={'btn' + (listening ? ' pri' : '')} onClick={mic} aria-pressed={listening} aria-label={listening ? 'Arrêter la dictée' : 'Dicter'}><Mic size={16} /></button>}
       <button className="btn pri" disabled={busy || !text.trim()} aria-label="Envoyer"><Send size={16} /></button></form>
-    {liveOn && (liveConsent ? <div className="row"><button type="button" className={'btn' + (live !== 'closed' ? ' pri' : '')} onClick={liveToggle} aria-pressed={live !== 'closed'}>
+    {signedIn && liveOn && (liveConsent ? <div className="row"><button type="button" className={'btn' + (live !== 'closed' ? ' pri' : '')} onClick={liveToggle} aria-pressed={live !== 'closed'}>
         {live === 'closed' ? <><AudioLines size={16} /> Conversation vocale</> : <><Square size={16} /> Arrêter</>}</button>
         <span className="meta" aria-live="polite">{live === 'connecting' ? 'Connexion…' : live === 'listening' ? 'Je vous écoute.' : live === 'speaking' ? 'Je réponds…' : ''}</span>
         <button type="button" className="btn" onClick={revokeLive} title="Retirer mon consentement à la conversation vocale">Retirer mon consentement</button></div>
       : <LiveConsentNotice onAccept={() => setLiveConsent(true)} />)}
-    {quota && <div className="meta" aria-live="polite">Requêtes IA restantes aujourd’hui : {quota.remaining} / {quota.limit}{quota.remaining <= 0 ? ' — recherche locale uniquement.' : ''}</div>}
+    {signedIn && quota && <div className="meta" aria-live="polite">Requêtes IA restantes aujourd’hui : {quota.remaining} / {quota.limit}{quota.remaining <= 0 ? ' — recherche locale uniquement.' : ''}</div>}
     <label className="meta"><input type="checkbox" checked={aloud} onChange={e => setAloud(e.target.checked)} /> Lire les réponses à voix haute</label>
   </section>);
 }

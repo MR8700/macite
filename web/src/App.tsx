@@ -200,10 +200,10 @@ export function App() {
           <button className="btn" onClick={() => rejectSurvey(s)}>Corriger</button></div></div>)}</div>}
 
     {tab === 'lieux' && canReview && <div className="sheet"><PlacesPanel token={auth!.token} role={auth!.role} onFocus={p => { setFocus([...p]); setTab('carte'); }} /></div>}
-    {tab === 'assistant' && auth && <div className="sheet"><AssistantPanel places={published} position={gps.fix ? { lat: gps.fix.p[1], lon: gps.fix.p[0] } : undefined} onShowPlace={aiShow} onNavigate={aiNavigate} /></div>}
+    {tab === 'assistant' && <div className="sheet"><AssistantPanel places={published} position={gps.fix ? { lat: gps.fix.p[1], lon: gps.fix.p[0] } : undefined} onShowPlace={aiShow} onNavigate={aiNavigate} onLogin={() => setTab('sync')} /></div>}
     {tab === 'admin' && auth?.role === 'admin' && <div className="sheet"><AdminPanel token={auth.token} /></div>}
     <nav className="nav" aria-label="Navigation principale">
-      {([['carte', MapIcon, 'Carte'], ['releve', PenLine, 'Relevé'], ['sync', RefreshCw, 'Synchro'], ...(canReview ? [['valider', ShieldCheck, 'Valider'], ['lieux', Building2, 'Lieux']] : []), ...(auth ? [['assistant', Sparkles, 'Assistant']] : []), ...(auth?.role === 'admin' ? [['admin', Settings, 'Admin']] : [])] as [Tab, typeof MapIcon, string][]).map(([t, I, l]) =>
+      {([['carte', MapIcon, 'Carte'], ['releve', PenLine, 'Relevé'], ['sync', RefreshCw, 'Synchro'], ['assistant', Sparkles, 'Assistant'], ...(canReview ? [['valider', ShieldCheck, 'Valider'], ['lieux', Building2, 'Lieux']] : []), ...(auth?.role === 'admin' ? [['admin', Settings, 'Admin']] : [])] as [Tab, typeof MapIcon, string][]).map(([t, I, l]) =>
         <button key={t} className={tab === t ? 'on' : ''} onClick={() => { setTab(t); if (t === 'valider') loadQueue(); }} aria-current={tab === t}><I size={22} />{l}</button>)}
     </nav>
   </div>);
