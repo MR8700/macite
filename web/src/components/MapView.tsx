@@ -5,11 +5,13 @@ import type { Feature, FeatureCollection } from 'geojson';
 type MLMap = GLMap;
 import type { Kind, LngLat } from '../lib/geo';
 
-export interface Feat { id: string; kind: Kind; name: string; points: LngLat[]; draft?: boolean }
+export interface Feat { id: string; kind: Kind; name: string; points: LngLat[]; type?: string; level?: number | null; draft?: boolean }
 const fc = (fs: Feat[]) => ({
   type: 'FeatureCollection' as const,
   features: fs.filter(f => f.points.length).flatMap(f => {
-    const p = { name: f.name, id: f.id };
+    const p = { name: f.name, id: f.id, type: f.type ?? '', level: f.level ?? null,
+      // Volumétrie indicative pour les empreintes validées du campus, pas une mesure cadastrale.
+      height: f.type === 'batiment' ? 9 : f.type === 'aile' ? 4 : 0 };
     const geom = f.kind === 'point' || f.points.length === 1 ? { type: 'Point' as const, coordinates: f.points[0] }
       : f.kind === 'path' || f.points.length === 2 ? { type: 'LineString' as const, coordinates: f.points }
       : { type: 'Polygon' as const, coordinates: [[...f.points, f.points[0]]] };
@@ -20,10 +22,12 @@ const fc = (fs: Feat[]) => ({
 });
 // Centre par défaut = Ouagadougou (vue approximative, ce n'est PAS une donnée de relevé).
 const DEFAULT: LngLat = [-1.5197, 12.3714];
+const TERRAIN_TILES = ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'];
 
-interface Props { published: Feat[]; draft: Feat | null; route: { coords: LngLat[]; on: boolean }[] | null; user: LngLat | null; focus: LngLat | null; hasLocal?: boolean; onEditPoint?: (i: number, p: LngLat | null) => void; onReady: (m: MLMap) => void }
-export function MapView({ published, draft, route, user, focus, hasLocal, onEditPoint, onReady }: Props) {
+interface Props { published: Feat[]; draft: Feat | null; route: { coords: LngLat[]; on: boolean }[] | null; user: LngLat | null; heading?: number | null; followGps?: boolean; terrain?: boolean; threeD?: boolean; level?: number | null; focus: LngLat | null; hasLocal?: boolean; onEditPoint?: (i: number, p: LngLat | null) => void; onSelect?: (id: string) => void; onReady: (m: MLMap) => void }
+export function MapView({ published, draft, route, user, heading, followGps, terrain, threeD, level, focus, hasLocal, onEditPoint, onSelect, onReady }: Props) {
   const markers = useRef<Marker[]>([]);
+  const onSelectRef = useRef(onSelect); onSelectRef.current = onSelect;
   const el = useRef<HTMLDivElement>(null); const map = useRef<MLMap | undefined>(undefined); const [ready, setReady] = useState(false);
   const set = (id: string, d: FeatureCollection) => (map.current?.getSource(id) as GeoJSONSource | undefined)?.setData(d);
   useEffect(() => {
@@ -42,6 +46,20 @@ export function MapView({ published, draft, route, user, focus, hasLocal, onEdit
       m.addLayer({ id: 'route', type: 'line', source: 'route', paint: { 'line-color': '#3478F6', 'line-width': 5, 'line-opacity': ['case', ['get', 'on'], 1, 0.22] } });
       m.addLayer({ id: 'user-halo', type: 'circle', source: 'user', paint: { 'circle-color': '#3478F6', 'circle-opacity': 0.2, 'circle-radius': 18 } });
       m.addLayer({ id: 'user', type: 'circle', source: 'user', paint: { 'circle-color': '#3478F6', 'circle-radius': 7, 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } });
+      m.addSource('terrain-dem', { type: 'raster-dem', tiles: TERRAIN_TILES, tileSize: 256, maxzoom: 15, encoding: 'terrarium', attribution: 'Terrain : Mapzen / AWS Open Data' });
+      // MapLibre déconseille de partager la même source entre hillshade et le maillage 3D.
+      m.addSource('terrain-shading-dem', { type: 'raster-dem', tiles: TERRAIN_TILES, tileSize: 256, maxzoom: 15, encoding: 'terrarium', attribution: 'Terrain : Mapzen / AWS Open Data' });
+      m.addLayer({ id: 'terrain-hillshade', type: 'hillshade', source: 'terrain-shading-dem', layout: { visibility: 'visible' }, paint: { 'hillshade-exaggeration': 0.24, 'hillshade-shadow-color': '#43566b', 'hillshade-highlight-color': '#ffffff' } }, 'pub-fill');
+      m.addLayer({ id: 'published-buildings-3d', type: 'fill-extrusion', source: 'pub', filter: ['all', ['==', '$type', 'Polygon'], ['in', ['get', 'type'], ['literal', ['batiment', 'aile']]]], paint: {
+        'fill-extrusion-color': '#397c68', 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': 0,
+        'fill-extrusion-opacity': 0.82, 'fill-extrusion-vertical-gradient': true,
+      }, layout: { visibility: 'none' } }, 'draft-fill');
+      m.on('click', e => {
+        const hit = m.queryRenderedFeatures(e.point, { layers: ['pub-fill', 'pub-line', 'pub-pt'] })[0];
+        const id = hit?.properties?.id;
+        if (typeof id === 'string') onSelectRef.current?.(id);
+      });
+      m.on('mousemove', e => { m.getCanvas().style.cursor = m.queryRenderedFeatures(e.point, { layers: ['pub-fill', 'pub-line', 'pub-pt'] }).length ? 'pointer' : ''; });
       onReady(m); setReady(true);
     });
     return () => m.remove();
@@ -51,6 +69,24 @@ export function MapView({ published, draft, route, user, focus, hasLocal, onEdit
   useEffect(() => { if (ready) set('draft', fc(draft ? [{ ...draft, draft: true }] : [])); }, [draft, ready]);
   useEffect(() => { if (ready) set('route', { type: 'FeatureCollection', features: (route ?? []).filter(l => l.coords.length > 1).map(l => ({ type: 'Feature' as const, properties: { on: l.on }, geometry: { type: 'LineString' as const, coordinates: l.coords } })) }); }, [route, ready]);
   useEffect(() => { if (ready) set('user', { type: 'FeatureCollection', features: user ? [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: user } }] : [] }); }, [user, ready]);
+  useEffect(() => {
+    const m = map.current; if (!ready || !m) return;
+    if (m.getLayer('terrain-hillshade')) m.setLayoutProperty('terrain-hillshade', 'visibility', terrain ? 'visible' : 'none');
+    if (m.getLayer('published-buildings-3d')) m.setLayoutProperty('published-buildings-3d', 'visibility', threeD ? 'visible' : 'none');
+    if (terrain || threeD) m.setTerrain({ source: 'terrain-dem', exaggeration: threeD ? 1.15 : 0.75 }); else m.setTerrain(null);
+    m.easeTo({ pitch: threeD ? 55 : 0, duration: 500 });
+  }, [terrain, threeD, ready]);
+  useEffect(() => {
+    const m = map.current; if (!ready || !m) return;
+    if (level == null) { m.setFilter('pub-fill', ['==', '$type', 'Polygon']); m.setFilter('pub-line', ['!=', '$type', 'Point']); m.setFilter('pub-pt', ['==', '$type', 'Point']); return; }
+    m.setFilter('pub-fill', ['all', ['==', '$type', 'Polygon'], ['==', ['get', 'level'], level]]);
+    m.setFilter('pub-line', ['all', ['!=', '$type', 'Point'], ['==', ['get', 'level'], level]]);
+    m.setFilter('pub-pt', ['all', ['==', '$type', 'Point'], ['==', ['get', 'level'], level]]);
+  }, [level, ready]);
+  useEffect(() => {
+    if (!ready || !followGps || !user) return;
+    map.current?.easeTo({ center: user, bearing: heading ?? map.current.getBearing(), pitch: threeD ? 55 : 48, duration: 350 });
+  }, [user, heading, followGps, threeD, ready]);
   // Fond de carte local (téléchargé) : placé SOUS la couche en ligne, visible dès que le réseau manque.
   useEffect(() => {
     const m = map.current; if (!ready || !m) return;

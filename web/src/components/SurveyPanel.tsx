@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Crosshair, Undo2, Redo2, Check, Send, Save, LocateFixed, Trash2 } from 'lucide-react';
-import { accuracyLevel, cardinal, polygonOrientation, shouldCapture, validateGeometry, type Kind, type LngLat } from '../lib/geo';
+import { accuracyLevel, cardinal, pathLength, polygonOrientation, shouldCapture, validateGeometry, type Kind, type LngLat } from '../lib/geo';
 import { db, newId, saveDraft, type Survey } from '../lib/db';
 import { resizeToJpeg } from '../lib/photo';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -59,7 +59,9 @@ export function SurveyPanel({ s, onChange, fix, gps, startGps, center, onDone }:
   };
   const orient = s.kind === 'polygon' && s.points.length >= 3 ? polygonOrientation(s.points) : null;
   const heading = fix?.heading != null && !Number.isNaN(fix.heading) ? fix.heading : null;
-  return (<div>
+  return (<div className="survey-editor">
+    <div className="survey-brand"><div><span className="eyebrow">KOSSODO NAVIGATOR / RELEVE</span><h2>Nouveau relevé</h2></div><span className="online-pill"><i className={gps === 'ok' ? '' : 'offline'} />{gps === 'ok' ? 'GPS actif' : gps === 'acquisition' ? 'Recherche GPS' : 'GPS prêt'}</span></div>
+    <div className="survey-metrics"><div><b>{fix ? `± ${fix.acc.toFixed(1)} m` : '—'}</b><small>{fix ? LVL[lvl][0] : 'Précision GPS'}</small></div><div><b>{s.points.length}</b><small>Sommets</small></div><div><b>{s.kind === 'path' ? `${Math.round(pathLength(s.points))} m` : s.kind === 'polygon' && s.points.length >= 3 ? `${s.points.length} pts` : '—'}</b><small>{s.kind === 'path' ? 'Distance' : 'Contour'}</small></div><div><b>{heading != null ? `${Math.round(heading)}°` : '—'}</b><small>Cap GPS</small></div></div>
     <h2 style={{ fontSize: 18 }}>Nouveau relevé</h2>
     <div className="row seg" role="group" aria-label="Type de relevé">{KINDS.map(([k, l]) => <button key={k} className={'btn' + (s.kind === k ? ' on' : '')} onClick={() => onChange({ ...s, kind: k, placeType: '', parentId: null, level: null, points: [], accuracies: [], capturedAt: [] })}>{l}</button>)}</div>
     <input className="f" placeholder="Nom du lieu" value={s.name} onChange={e => onChange({ ...s, name: e.target.value })} aria-label="Nom du lieu" />

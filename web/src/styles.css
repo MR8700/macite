@@ -30,3 +30,64 @@ input.f,select.f,textarea.f{width:100%;min-height:44px;border:1px solid var(--bd
 .gps{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:var(--bg);margin:8px 0}
 .cross{position:absolute;left:50%;top:50%;z-index:3;width:28px;height:28px;margin:-14px;pointer-events:none;border:2px solid var(--navy);border-radius:50%;background:rgba(255,255,255,.35)}
 .err{color:var(--err);font-size:13px;margin:4px 0}
+
+/* Kossodo Navigator: cartographie plein écran et commandes de terrain tactiles. */
+:root{--navy:#14294d;--g:#087f5b;--gd:#056247;--gl:#e5f5ed;--bg:#f5f6ff;--surf:#fff;--bd:#e1e5f1;--tx:#151d30;--tx2:#647187;--gps:#2563eb;--sh:0 8px 26px rgba(23,43,77,.12)}
+body{background:var(--bg);font-size:14px}
+h1,h2,h3{font-family:"Plus Jakarta Sans",Inter,system-ui,sans-serif}
+.top{left:12px;right:12px;top:max(12px,env(safe-area-inset-top));gap:10px}
+.logo{height:44px;width:48px;object-fit:contain;padding:5px;border-radius:14px}
+.search{height:50px;border-radius:18px;box-shadow:0 4px 18px rgba(20,41,77,.08)}
+.map-filters{position:absolute;z-index:5;top:72px;left:14px;display:flex;gap:7px;max-width:calc(100vw - 95px);overflow:auto;padding:2px 2px 6px;scrollbar-width:none}
+.map-filters button,.floor-tools button{flex:0 0 auto;border:1px solid rgba(214,220,235,.9);border-radius:999px;background:rgba(255,255,255,.94);color:#4c5870;min-height:34px;padding:0 14px;font:600 12px Inter,system-ui,sans-serif;box-shadow:0 3px 12px rgba(20,41,77,.08);backdrop-filter:blur(14px)}
+.map-filters button.selected,.floor-tools button.selected{background:#1d4ed8;border-color:#1d4ed8;color:white}
+.map-direction{position:absolute;z-index:4;top:116px;left:16px;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.9);color:#263c5e;font-size:11px;font-weight:700;box-shadow:0 2px 10px rgba(20,41,77,.1);backdrop-filter:blur(12px)}
+.map-tools{right:12px;top:126px!important;gap:8px}
+.map-tools .ic{width:44px;height:44px;border-radius:15px;color:#173864}
+.map-tools .ic.active{color:#075fc8;background:#edf4ff;outline:1px solid #b6d0f8}
+.floor-tools{position:absolute;z-index:4;right:12px;top:42%;display:flex;flex-direction:column;align-items:stretch;gap:5px;max-height:38vh;overflow:auto;padding:4px;scrollbar-width:none}
+.floor-tools button{min-height:34px;padding:0 10px;display:flex;align-items:center;justify-content:center;gap:4px}
+.sugg{top:128px;left:12px;right:12px;border-radius:16px}
+.sheet{border-radius:24px 24px 0 0;padding:16px 20px max(16px,env(safe-area-inset-bottom));box-shadow:0 -10px 36px rgba(15,31,58,.12);max-height:61%;}
+.campus-home,.campus-empty{max-height:min(42%,390px);padding:17px 20px 14px;background:rgba(255,255,255,.98)}
+.campus-title,.survey-brand{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}
+.campus-title h2,.survey-brand h2{font-size:20px;line-height:1.2;letter-spacing:-.03em;margin-top:2px}
+.eyebrow{display:block;color:#2563eb;font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.online-pill{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;border-radius:999px;background:#e9f8f0;color:#087f5b;padding:7px 10px;font-size:10px;font-weight:800}
+.online-pill i,.metric-dot{width:8px;height:8px;display:inline-block;border-radius:50%;background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.13)}
+.online-pill i.offline{background:#8c97a9;box-shadow:0 0 0 3px rgba(140,151,169,.12)}
+.campus-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:13px 0}
+.campus-stats>div{padding:9px 10px;border:1px solid #e6eaf5;border-radius:13px;background:#f8f9ff;display:flex;flex-direction:column;gap:2px}
+.campus-stats b{font:800 19px "Plus Jakarta Sans",Inter,sans-serif;color:#1d4ed8}
+.campus-stats span,.home-places small{font-size:10px;color:var(--tx2)}
+.home-places{display:grid;gap:5px}
+.home-places button{display:flex;align-items:center;gap:10px;width:100%;min-height:47px;text-align:left;border:0;border-radius:13px;padding:7px 10px;background:#f6f7fc;color:#223654;font:inherit}
+.home-places button>span:nth-child(2){display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.home-places button b{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.place-symbol{width:31px;height:31px;border-radius:10px;background:#e8edff;color:#1d4ed8;display:grid;place-items:center}
+.map-attribution-note{margin-top:8px;color:#758198;font-size:9px}
+.survey-sheet{max-height:68%;padding-bottom:max(18px,env(safe-area-inset-bottom))}
+.survey-editor > h2{display:none}
+.place-context{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0}
+.place-context span{border-radius:999px;background:#eef2ff;color:#334b76;padding:6px 9px;font-size:10px;font-weight:700}
+.nav-guidance{display:grid;gap:5px;margin:11px 0;padding:13px 14px;border-radius:15px;background:#1d4ed8;color:white;box-shadow:0 6px 16px rgba(29,78,216,.2)}
+.nav-guidance span{font-size:9px;letter-spacing:.1em;font-weight:800;opacity:.78}
+.nav-guidance b{font:700 15px/1.35 "Plus Jakarta Sans",Inter,sans-serif}
+.nav-guidance small{font-size:10px;opacity:.82}
+.survey-editor .survey-brand{margin-bottom:12px}
+.survey-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:8px 0 12px}
+.survey-metrics>div{display:flex;min-width:0;flex-direction:column;gap:3px;padding:9px 10px;border-radius:13px;background:#f3f5ff;border:1px solid #e7eafb}
+.survey-metrics b{font:800 14px "Plus Jakarta Sans",Inter,sans-serif;color:#173864;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.survey-metrics small{font-size:9px;color:#69778d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.survey-sheet .row.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:9px 0}
+.survey-sheet .row.seg .btn{min-height:43px;padding:0 8px;border-radius:12px;font-size:12px}
+.survey-sheet .row.seg .btn.on{background:#e7f6ee;border-color:#12956b;color:#08684b}
+.survey-sheet .gps{background:#f3f6fa;border-radius:14px}
+.survey-sheet .btn.pri{background:#087f5b;border-color:#087f5b}
+.survey-sheet .f{background:#fff}
+.survey-sheet .gps .meta{line-height:1.5}
+.campus-empty .row .btn{flex:1}
+.nav{height:calc(62px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:rgba(255,255,255,.97);backdrop-filter:blur(18px)}
+.sheet{bottom:calc(62px + env(safe-area-inset-bottom))}
+.nav button{font-size:11px}
+@media(max-width:560px){.map-filters{top:70px}.map-direction{top:114px}.campus-home,.campus-empty{max-height:39%;padding:13px 15px 10px}.campus-title h2,.survey-brand h2{font-size:18px}.sheet{padding-left:15px;padding-right:15px}.survey-sheet{max-height:69%}.survey-metrics{gap:5px}.survey-metrics>div{padding:8px 7px}.survey-metrics b{font-size:12px}}

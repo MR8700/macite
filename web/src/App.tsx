@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Map as MLMap } from 'maplibre-gl';
-import { Map as MapIcon, PenLine, RefreshCw, ShieldCheck, Settings, Search, LocateFixed, WifiOff, Navigation, Building2, Sparkles } from 'lucide-react';
+import { Map as MapIcon, PenLine, RefreshCw, ShieldCheck, Settings, Search, WifiOff, Navigation, Building2, Sparkles, Mountain, Box, Compass, Layers } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { MapView, type Feat } from './components/MapView';
 import { SurveyPanel, emptySurvey } from './components/SurveyPanel';
@@ -18,6 +18,7 @@ import type { AiPlace } from './lib/aiClient';
 import { ReviewPhotos } from './components/ReviewPhotos';
 import { downloadOfflineMap, getOfflineMap, removeOfflineMap } from './lib/offlineMap';
 import { useGps } from './lib/useGps';
+import { useCompass } from './lib/compass';
 
 type Tab = 'carte' | 'releve' | 'sync' | 'valider' | 'lieux' | 'admin' | 'assistant';
 /** Session stockée : une valeur corrompue ne doit pas empêcher l'application de démarrer. */
@@ -30,7 +31,10 @@ export function App() {
   const [route, setRoute] = useState<Route | null>(null); const [navMsg, setNavMsg] = useState('');
   const [survey, setSurvey] = useState<Survey>(emptySurvey()); const map = useRef<MLMap | undefined>(undefined);
   const [auth, setAuth] = useState<{ token: string; role: string } | null>(readAuth);
+  const [terrain, setTerrain] = useState(true); const [threeD, setThreeD] = useState(false); const [gpsFollow, setGpsFollow] = useState(false);
+  const [activeLevel, setActiveLevel] = useState<number | null>(null); const [activeFilter, setActiveFilter] = useState('Tous');
   const gps = useGps();
+  const compass = useCompass();
   const published = useLiveQuery(() => db.published.toArray(), [], [] as PublishedPlace[]);
   const offline = useLiveQuery(async () => (await getOfflineMap()) ?? null, [], null);
   const [dl, setDl] = useState<number | null>(null); const [dlMsg, setDlMsg] = useState('');
@@ -42,7 +46,10 @@ export function App() {
   const [accessible, setAccessible] = useState(false); const [startId, setStartId] = useState(''); const [steps, setSteps] = useState<string[]>([]);
   const navPlaces = published as unknown as NavPlace[];
   const graph = useMemo(() => buildNavGraph(navPlaces, { accessibleOnly: accessible }), [navPlaces, accessible]);
-  const feats: Feat[] = published.map(p => ({ id: p.id, kind: p.kind, name: p.name, points: p.points }));
+  const levelList = [...new Set(published.map(p => p.level).filter((n): n is number => typeof n === 'number'))].sort((a, b) => a - b);
+  const filterTypes: Record<string, string[]> = { Tous: [], Bâtiments: ['batiment', 'aile'], Services: ['service', 'infirmerie', 'sanitaires', 'conciergerie'], Chambres: ['chambre', 'salle_etude', 'salle_conference'] };
+  const visiblePlaces = activeFilter === 'Tous' ? published : published.filter(p => filterTypes[activeFilter]?.includes(p.type ?? ''));
+  const feats: Feat[] = visiblePlaces.map(p => ({ id: p.id, kind: p.kind, name: p.name, points: p.points, type: p.type, level: p.level }));
   const draftFeat: Feat | null = tab === 'releve' ? { id: survey.id, kind: survey.kind, name: survey.name, points: survey.points } : null;
 
   // Déplacement (position manuelle → précision inconnue) ou suppression d'un sommet.
@@ -118,7 +125,7 @@ export function App() {
   const canReview = auth && ['expert', 'admin'].includes(auth.role);
 
   return (<div className="app">
-    <MapView published={feats} draft={draftFeat} route={route ? legs.map(l => ({ coords: l.coords, on: shownTag === 'all' || l.tag === shownTag })) : null} user={gps.fix?.p ?? null} focus={focus} hasLocal={!!offline} onEditPoint={tab === 'releve' ? editPoint : undefined} onReady={m => (map.current = m)} />
+    <MapView published={feats} draft={draftFeat} route={route ? legs.map(l => ({ coords: l.coords, on: shownTag === 'all' || l.tag === shownTag })) : null} user={gps.fix?.p ?? null} heading={gps.fix?.heading ?? (compass.heading?.reliable ? compass.heading.deg : null)} followGps={gpsFollow} terrain={terrain} threeD={threeD} level={activeLevel} focus={focus} hasLocal={!!offline} onEditPoint={tab === 'releve' ? editPoint : undefined} onSelect={id => { const place = published.find(p => p.id === id); if (place) goTo(place); }} onReady={m => (map.current = m)} />
     {tab === 'releve' && <div className="cross" aria-hidden />}
     <div className="top">
       <img className="logo" src="/icon.svg" alt="MaCité" />
@@ -126,12 +133,23 @@ export function App() {
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Bâtiment, chambre, service, terrain…" aria-label="Rechercher un lieu" /></label>
       {!online && <span className="badge warn"><WifiOff size={14} />Hors ligne</span>}
     </div>
+    {tab === 'carte' && <div className="map-filters" role="group" aria-label="Filtrer les lieux de la carte">{Object.keys(filterTypes).map(f => <button key={f} className={activeFilter === f ? 'selected' : ''} onClick={() => setActiveFilter(f)}>{f}</button>)}</div>}
+    {tab === 'carte' && <div className="map-direction" aria-live="polite"><Compass size={14} />{gps.fix?.heading != null ? `Cap GPS ${Math.round(gps.fix.heading)}°` : compass.heading?.reliable ? `Cap téléphone ${Math.round(compass.heading.deg)}°` : gpsFollow ? 'Orientation en attente' : 'Nord en haut'}{threeD && <span> · volumes indicatifs</span>}</div>}
     {q && <div className="sugg" role="listbox">{sugg.length ? sugg.map(p => <button key={p.id} onClick={() => goTo(p)}><Building2 size={18} /><span><b>{p.name}</b><div className="meta">{p.type_label}</div></span></button>)
       : <div style={{ padding: 12 }} className="meta">{published.length ? 'Aucun résultat.' : 'Aucune donnée publiée sur cet appareil. Allez dans « Synchro » pour télécharger la carte.'}</div>}</div>}
-    <div className="fab" style={{ top: 72 }}><button className="ic" aria-label="Me localiser" onClick={() => { gps.start(); if (gps.fix) setFocus([...gps.fix.p]); }}><LocateFixed size={22} /></button></div>
+    <div className="fab map-tools" style={{ top: 124 }}>
+      <button className={'ic' + (gpsFollow ? ' active' : '')} aria-label={gpsFollow ? 'Arrêter le suivi GPS' : 'Activer la vision GPS'} title="Vision GPS" onClick={() => { const next = !gpsFollow; setGpsFollow(next); if (next) { gps.start(); compass.start(); if (gps.fix) setFocus([...gps.fix.p]); } }}><Navigation size={20} /></button>
+      <button className={'ic' + (terrain ? ' active' : '')} aria-label="Activer ou désactiver le relief" title="Relief" onClick={() => setTerrain(v => !v)}><Mountain size={20} /></button>
+      <button className={'ic' + (threeD ? ' active' : '')} aria-label="Activer ou désactiver la vue 3D" title="Vue 3D" onClick={() => { setThreeD(v => !v); setTerrain(true); }}><Box size={20} /></button>
+    </div>
+    {tab === 'carte' && levelList.length > 0 && <div className="floor-tools" role="group" aria-label="Niveau intérieur">
+      <button className={activeLevel == null ? 'selected' : ''} onClick={() => setActiveLevel(null)} aria-pressed={activeLevel == null}><Layers size={14} />Tout</button>
+      {levelList.map(n => <button key={n} className={activeLevel === n ? 'selected' : ''} onClick={() => setActiveLevel(n)} aria-pressed={activeLevel === n}>{n < 0 ? `SS${Math.abs(n)}` : n === 0 ? 'RDC' : `R+${n}`}</button>)}
+    </div>}
 
     {tab === 'carte' && sel && <div className="sheet"><h2>{sel.name}</h2><div className="meta">{sel.type_label} · <span className="badge">Publié v{sel.mapVersion}</span></div>
       {sel.points[0] && <div className="meta">{sel.points[0][1].toFixed(6)}, {sel.points[0][0].toFixed(6)}</div>}
+      {(sel.parent_name || sel.level != null || sel.number) && <div className="place-context">{sel.parent_name && <span>{sel.parent_name}</span>}{sel.level != null && <span>{sel.level < 0 ? `Sous-sol ${Math.abs(sel.level)}` : sel.level === 0 ? 'Rez-de-chaussée' : `Étage R+${sel.level}`}</span>}{sel.number && <span>Code {sel.number}</span>}</div>}
       <div className="row"><button className="btn pri" onClick={itinerary}><Navigation size={18} />Y aller</button><button className="btn" onClick={() => { setSel(null); setRoute(null); }}>Fermer</button></div>
       <div className="row"><select className="f" style={{ flex: 1 }} aria-label="Point de départ" value={startId} onChange={e => setStartId(e.target.value)}>
         <option value="">Départ : ma position GPS (extérieur)</option>{[...published].filter(x => x.id !== sel.id).sort((a, b) => a.name.localeCompare(b.name)).map(x => <option key={x.id} value={x.id}>Départ : {x.name}</option>)}</select>
@@ -143,15 +161,16 @@ export function App() {
       {legs.length > 1 && <div className="row" role="group" aria-label="Niveau affiché sur la carte">{['all', ...Array.from(new Set(legs.map(l => l.tag)))].map(t =>
         <button key={t} className={'btn' + (shownTag === t ? ' pri' : '')} style={{ minHeight: 36 }} aria-pressed={shownTag === t}
           onClick={() => { setShownTag(t); const l = legs.find(x => x.tag === t); if (l) setFocus(l.coords[0]); }}>{t === 'all' ? 'Tout' : tagLabel(t)}</button>)}</div>}
-      {steps.length > 0 && <ol className="meta" style={{ paddingLeft: 18 }}>{steps.map((t, i) => <li key={i}>{t}</li>)}</ol>}
+      {steps.length > 0 && <><div className="nav-guidance"><span>PROCHAINE ÉTAPE</span><b>{steps[0]}</b><small>Guidage basé sur les cheminements publiés du campus.</small></div><details className="meta"><summary>Voir toutes les étapes ({steps.length})</summary><ol style={{ paddingLeft: 18 }}>{steps.map((t, i) => <li key={i}>{t}</li>)}</ol></details></>}
       {route && <div><b>{Math.round(route.distance)} m</b> · environ {Math.max(1, Math.round(route.seconds / 60))} min à pied <span className="meta">(estimation, vitesse de marche supposée)</span></div>}
       {navMsg && <div className="err" role="alert">{navMsg}</div>}
       {canReview && graph.warnings.length > 0 && <details className="meta"><summary>⚠ {graph.warnings.length} élément(s) non relié(s) au réseau : des itinéraires peuvent manquer</summary>
         <ul style={{ paddingLeft: 18 }}>{graph.warnings.slice(0, 8).map((w, i) => <li key={i}>{w}</li>)}</ul></details>}</div>}
-    {tab === 'carte' && !sel && !published.length && <div className="sheet"><h2>Bienvenue sur MaCité</h2><div className="meta">Ma cité, je m’y retrouve. Aucune carte publiée n’est encore enregistrée sur cet appareil : réalisez des relevés (onglet Relevé) ou téléchargez la carte (onglet Synchro).</div></div>}
-    {tab === 'releve' && <div className="sheet"><SurveyPanel s={survey} onChange={setSurvey} fix={gps.fix} gps={gps.state} startGps={gps.start}
+    {tab === 'carte' && !sel && !published.length && <div className="sheet campus-empty"><div className="campus-title"><div><span className="eyebrow">KOSSODO NAVIGATEUR</span><h2>Bienvenue sur MaCité</h2></div><span className="online-pill"><i className={online ? '' : 'offline'} />{online ? 'En ligne' : 'Hors ligne'}</span></div><div className="meta">Ma cité, je m’y retrouve. Aucune carte publiée n’est encore enregistrée sur cet appareil.</div><div className="row"><button className="btn pri" onClick={() => setTab('releve')}><PenLine size={16} />Faire un relevé</button><button className="btn" onClick={() => setTab('sync')}><RefreshCw size={16} />Synchroniser la carte</button></div><div className="map-attribution-note">Relief : Mapzen / AWS Open Data. Carte : OpenStreetMap.</div></div>}
+    {tab === 'carte' && !sel && published.length > 0 && <div className="sheet campus-home"><div className="campus-title"><div><span className="eyebrow">KOSSODO CAMPUS</span><h2>Explorer le campus</h2></div><span className="online-pill"><i className={gps.fix ? '' : 'offline'} />{gps.fix ? `GPS ±${Math.round(gps.fix.acc)} m` : 'GPS prêt'}</span></div><div className="campus-stats"><div><b>{published.length}</b><span>lieux connus</span></div><div><b>{published.filter(p => ['batiment', 'aile'].includes(p.type ?? '')).length}</b><span>bâtiments</span></div><div><b>{published.filter(p => ['service', 'infirmerie', 'sanitaires'].includes(p.type ?? '')).length}</b><span>services</span></div></div><div className="home-places">{published.slice(0, 3).map(p => <button key={p.id} onClick={() => goTo(p)}><span className="place-symbol"><Building2 size={17} /></span><span><b>{p.name}</b><small>{p.type_label}{p.parent_name ? ` · ${p.parent_name}` : ''}</small></span><Navigation size={16} /></button>)}</div><div className="map-attribution-note">Terrain Mapzen / AWS Open Data · Carte OpenStreetMap</div></div>}
+    {tab === 'releve' && <div className="sheet survey-sheet"><SurveyPanel s={survey} onChange={setSurvey} fix={gps.fix} gps={gps.state} startGps={gps.start}
       center={() => { const c = map.current!.getCenter(); return [c.lng, c.lat]; }} onDone={() => { setSurvey(emptySurvey()); setTab('sync'); }} /></div>}
-    {tab === 'sync' && <div className="sheet"><h2>Synchronisation</h2>
+    {tab === 'sync' && <div className="sheet"><div className="campus-title"><h2>Synchronisation</h2><span className="online-pill"><i className={online ? '' : 'offline'} />{online ? 'En ligne' : 'Hors ligne'}</span></div>
       <div className="meta">{online ? 'Connecté' : 'Hors ligne : les relevés restent sur l’appareil.'}</div>
       {!auth ? <form onSubmit={e => { e.preventDefault(); doLogin(new FormData(e.currentTarget)); }}><input className="f" name="u" placeholder="Identifiant" aria-label="Identifiant" /><input className="f" name="p" type="password" placeholder="Mot de passe" aria-label="Mot de passe" /><button className="btn pri">Se connecter</button></form>
         : <div className="row"><span className="badge">Rôle : {auth.role}</span><button className="btn pri" onClick={sync} disabled={!online}><RefreshCw size={16} />Synchroniser</button><button className="btn" onClick={expire}>Déconnexion</button></div>}
